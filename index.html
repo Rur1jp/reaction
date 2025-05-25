@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord リアクションツール</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f0f2f5; color: #333; }
+        .container { background-color: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); max-width: 600px; margin: auto; }
+        h1 { color: #5865F2; text-align: center; margin-bottom: 30px; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; }
+        input[type="text"], input[type="number"], select {
+            width: calc(100% - 22px);
+            padding: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #5865F2;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 18px;
+            width: 100%;
+            transition: background-color 0.3s ease;
+        }
+        button:hover { background-color: #4752C4; }
+        .warning {
+            background-color: #ffe0b2;
+            color: #e65100;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border: 1px solid #ff9800;
+            text-align: center;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            background-color: #e9ecef;
+            color: #495057;
+            min-height: 30px;
+        }
+        .reaction-type-selection {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .reaction-type-selection div {
+            flex: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+      
+        <h1>Discord リアクションツール</h1>
+
+        <label for="userToken">トークン:</label>
+        <input type="text" id="userToken" placeholder="ここにDiscordトークンを入力">
+
+        <label for="channelId">チャンネルID:</label>
+        <input type="text" id="channelId" placeholder="リアクションを付けたいチャンネルのIDを入力">
+
+        <div class="reaction-type-selection">
+            <div>
+                <label for="reactionTarget">リアクション対象:</label>
+                <select id="reactionTarget">
+                    <option value="singleMessage">特定のメッセージ</option>
+                    <option value="allMessages">チャンネル内の全てのメッセージ</option>
+                </select>
+            </div>
+            <div>
+                <label for="messageId" id="messageIdLabel">メッセージID:</label>
+                <input type="text" id="messageId" placeholder="特定のメッセージIDを入力">
+            </div>
+        </div>
+
+        <label for="reactionEmoji">リアクション絵文字 (例: 👍, ❤️, custom_emoji_name:emoji_id):</label>
+        <input type="text" id="reactionEmoji" placeholder="絵文字を入力">
+
+        <label for="messageLimit">リアクションするメッセージ数 (チャンネル全体の場合):</label>
+        <input type="number" id="messageLimit" value="100" min="1" max="500">
+
+        <label for="delayTime">各リアクション間の遅延 (ミリ秒):</label>
+        <input type="number" id="delayTime" value="1000" min="100">
+
+        <button id="startReaction">リアクションを開始</button>
+
+        <div id="status"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const userTokenInput = document.getElementById('userToken');
+            const channelIdInput = document.getElementById('channelId');
+            const reactionTargetSelect = document.getElementById('reactionTarget');
+            const messageIdInput = document.getElementById('messageId');
+            const messageIdLabel = document.getElementById('messageIdLabel');
+            const reactionEmojiInput = document.getElementById('reactionEmoji');
+            const messageLimitInput = document.getElementById('messageLimit');
+            const delayTimeInput = document.getElementById('delayTime');
+            const startReactionButton = document.getElementById('startReaction');
+            const statusDiv = document.getElementById('status');
+
+            // 特定のメッセージID入力欄の表示/非表示を切り替える
+            reactionTargetSelect.addEventListener('change', () => {
+                if (reactionTargetSelect.value === 'singleMessage') {
+                    messageIdInput.style.display = 'block';
+                    messageIdLabel.style.display = 'block';
+                    messageLimitInput.parentElement.style.display = 'none'; // メッセージ数制限を非表示
+                } else {
+                    messageIdInput.style.display = 'none';
+                    messageIdLabel.style.display = 'none';
+                    messageLimitInput.parentElement.style.display = 'block'; // メッセージ数制限を表示
+                }
+            });
+
+            // 初期表示時に設定を適用
+            reactionTargetSelect.dispatchEvent(new Event('change'));
+
+            startReactionButton.addEventListener('click', async () => {
+                const userToken = userTokenInput.value.trim();
+                const channelId = channelIdInput.value.trim();
+                const reactionTarget = reactionTargetSelect.value;
+                const messageId = messageIdInput.value.trim();
+                const reactionEmoji = reactionEmojiInput.value.trim();
+                const messageLimit = parseInt(messageLimitInput.value, 10);
+                const delayTime = parseInt(delayTimeInput.value, 10);
+
+                if (!userToken || !channelId || !reactionEmoji) {
+                    updateStatus('エラー: 必要な情報が入力されていません。', 'red');
+                    return;
+                }
+
+                if (reactionTarget === 'singleMessage' && !messageId) {
+                    updateStatus('エラー: 特定のメッセージにリアクションする場合、メッセージIDが必要です。', 'red');
+                    return;
+                }
+
+                startReactionButton.disabled = true;
+                updateStatus('リアクション処理を開始します...', 'blue');
+
+                try {
+                    if (reactionTarget === 'singleMessage') {
+                        await addReactionToMessage(userToken, channelId, messageId, reactionEmoji);
+                        updateStatus(`メッセージID ${messageId} にリアクションを付けました。`, 'green');
+                    } else if (reactionTarget === 'allMessages') {
+                        await addReactionsToAllMessages(userToken, channelId, reactionEmoji, messageLimit, delayTime);
+                        updateStatus('指定されたメッセージ数にリアクションを付け終わりました。', 'green');
+                    }
+                } catch (error) {
+                    console.error('リアクション処理中にエラーが発生しました:', error);
+                    updateStatus(`エラーが発生しました: ${error.message}`, 'red');
+                } finally {
+                    startReactionButton.disabled = false;
+                }
+            });
+
+            // 特定のメッセージにリアクションを付ける関数
+            async function addReactionToMessage(token, channelId, messageId, emoji) {
+                const encodedEmoji = encodeURIComponent(emoji); // 絵文字をURLエンコード
+                const url = `https://discord.com/api/v9/channels/${channelId}/messages/${messageId}/reactions/${encodedEmoji}/@me`;
+
+                const response = await fetch(url, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': token,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`リアクションの追加に失敗しました: ${response.status} - ${errorText}`);
+                }
+                updateStatus(`メッセージ ${messageId} に絵文字 ${emoji} を付けました。`);
+            }
+
+            // チャンネル内の全てのメッセージにリアクションを付ける関数
+            async function addReactionsToAllMessages(token, channelId, emoji, limit, delay) {
+                let lastMessageId = null;
+                let reactedCount = 0;
+
+                updateStatus(`チャンネル ${channelId} のメッセージにリアクションを付けています... (最大 ${limit} 件)`);
+
+                while (reactedCount < limit) {
+                    // limitを考慮しつつ、Discord APIの最大取得数100件を超えないように調整
+                    let url = `https://discord.com/api/v9/channels/${channelId}/messages?limit=${Math.min(limit - reactedCount, 100)}`;
+                    if (lastMessageId) {
+                        url += `&before=${lastMessageId}`; // lastMessageIdより古いメッセージを取得
+                    }
+
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': token,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`メッセージの取得に失敗しました: ${response.status} - ${errorText}`);
+                    }
+
+                    const messages = await response.json();
+
+                    if (messages.length === 0) {
+                        updateStatus('これ以上メッセージが見つかりませんでした。', 'orange');
+                        break;
+                    }
+
+                    // メッセージを古い順に処理するために逆順にする (下から)
+                    const reversedMessages = messages.reverse();
+
+                    for (const message of reversedMessages) {
+                        if (reactedCount >= limit) break;
+
+                        // 既に同じリアクションが付いている場合はスキップ
+                        const existingReaction = message.reactions && message.reactions.find(r => {
+                            const isCustomEmoji = emoji.includes(':');
+                            if (isCustomEmoji) {
+                                const [emojiName, emojiId] = emoji.split(':');
+                                return r.emoji.name === emojiName && r.emoji.id === emojiId && r.me;
+                            } else {
+                                return r.emoji.name === emoji && r.me;
+                            }
+                        });
+
+                        if (existingReaction) {
+                            updateStatus(`メッセージ ${message.id} には既にリアクション ${emoji} が付いています。スキップします。`, 'gray');
+                            continue;
+                        }
+
+                        try {
+                            await addReactionToMessage(token, channelId, message.id, emoji);
+                            reactedCount++;
+                            updateStatus(`メッセージ ${message.id} にリアクション ${emoji} を付けました (${reactedCount}/${limit} 件)。`);
+                        } catch (addError) {
+                            updateStatus(`メッセージ ${message.id} へのリアクションでエラー: ${addError.message}`, 'red');
+                            // エラーが発生しても処理を続行
+                        }
+                        await new Promise(resolve => setTimeout(resolve, delay)); // 遅延
+                    }
+
+                    // 次回のリクエストのために、最後に取得したメッセージのIDを記録
+                    lastMessageId = messages[messages.length - 1].id;
+                }
+            }
+
+            function updateStatus(message, color = 'black') {
+                statusDiv.textContent = message;
+                statusDiv.style.color = color;
+            }
+        });
+    </script>
+</body>
+</html>
